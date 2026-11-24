@@ -1,0 +1,59 @@
+name: FPL Auto-Pilot Pre-Deadline Runner
+
+on:
+  schedule:
+    # Wakes up hourly: keeps cache alive & runs ~1 hour before every shifting GW deadline
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Force run immediately outside the 1-hour deadline window"
+        required: false
+        default: "true"
+
+jobs:
+  optimize-and-execute:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore session & Gameweek state cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .fpl_ran_gw_*
+            .fpl_session_cache.json
+          key: fpl-autopilot-state-${{ github.run_id }}
+          restore-keys: |
+            fpl-autopilot-state-
+
+      - name: Run FPL Auto-Pilot
+        id: autopilot
+        env:
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FPL_CLIENT_ID: ${{ secrets.FPL_CLIENT_ID }}
+          FPL_REFRESH_TOKEN: ${{ secrets.FPL_REFRESH_TOKEN }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
+          FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
+        run: python fpl_autopilot.py
+
+      - name: Save rotated token & Gameweek state cache
+        if: always() && steps.autopilot.outputs.state_changed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .fpl_ran_gw_*
+            .fpl_session_cache.json
+          key: fpl-autopilot-state-${{ github.run_id }}
